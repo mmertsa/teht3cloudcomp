@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="fi">
+<head>
+<meta charset="UTF-8">
+<title>Inventaariosovellus</title>
+<style>
+  body {
+    font-family: 'Segoe UI', Arial, sans-serif;
+    background: linear-gradient(135deg, #ffe6f0, #ffd6e8);
+    text-align: center;
+    padding: 20px;
+  }
+
+  h1 {
+    margin-bottom: 5px;
+    color: #b8326b;
+  }
+
+  p.description {
+    margin-top: 0;
+    margin-bottom: 20px;
+    color: #7a2b53;
+    font-size: 14px;
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+    line-height: 1.5;
+  }
+
+  #webcam-container {
+    width: 250px;
+    height: 250px;
+    margin: 20px auto;
+    border-radius: 15px;
+    overflow: hidden;
+    background-color: #fff0f6;
+    box-shadow: 0 8px 20px rgba(183, 50, 107, 0.2);
+  }
+
+  #webcam-container canvas {
+    width: 100% !important;
+    height: 100% !important;
+    object-fit: cover;
+  }
+
+  button {
+    padding: 12px 25px;
+    font-size: 16px;
+    border: none;
+    border-radius: 10px;
+    background-color: #f4a1c0;
+    color: white;
+    cursor: pointer;
+    transition: 0.3s;
+    margin-top: 10px;
+    margin-right: 10px;
+  }
+
+  button:hover {
+    background-color: #d97ea0;
+    transform: translateY(-2px);
+  }
+
+  #status {
+    margin-top: 15px;
+    font-size: 16px;
+    font-weight: 500;
+    color: #7a2b53;
+  }
+
+  .inventory {
+    display: flex;
+    justify-content: center;
+    gap: 40px;
+    margin-top: 30px;
+  }
+
+  .item {
+    background: #fff0f6;
+    padding: 20px;
+    border-radius: 15px;
+    width: 140px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    box-shadow: 0 6px 15px rgba(183, 50, 107, 0.15);
+    transition: 0.3s;
+  }
+
+  .item:hover {
+    box-shadow: 0 10px 25px rgba(183, 50, 107, 0.25);
+  }
+
+  .item img {
+    height: 80px;
+    width: auto;
+    object-fit: contain;
+    display: block;
+    margin-bottom: 10px;
+  }
+
+  .count {
+    font-size: 24px;
+    font-weight: bold;
+    text-align: center;
+  }
+</style>
+</head>
+
+<body>
+
+<h1>Inventaariosovellus</h1>
+<p class="description">
+  Laske toimistotarvikkeidesi määrä helposti, näytä esinettä kameralle ja katso 
+  kun joku muu tekee homman puolestasi (disclaimer: tunnistaa vain kynät ja hiiret)!
+</p>
+
+<div id="webcam-container"></div>
+<button onclick="init()">Aloita</button>
+<button onclick="stopCamera()">Pysäytä kamera</button>
+<button onclick="resetInventory()">Nollaa</button>
+
+<div id="status">Kamera ei käynnissä</div>
+
+<div class="inventory">
+  <div class="item">
+    <img src="kyna.png" alt="Kynä">
+    <div class="count">x <span id="kynaCount">0</span></div>
+  </div>
+
+  <div class="item">
+    <img src="hiiri.png" alt="Hiiri">
+    <div class="count">x <span id="hiiriCount">0</span></div>
+  </div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@latest/dist/tf.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@teachablemachine/image@latest/dist/teachablemachine-image.min.js"></script>
+
+<script>
+const URL = "https://teachablemachine.withgoogle.com/models/R7d9rpQu_/";
+
+const CLASS_MAP = {
+  "Kynä": "Kynä",
+  "Tietokoneen hiiri": "Hiiri"
+};
+
+const CONFIDENCE_THRESHOLD = 0.8;
+const COUNT_COOLDOWN_MS = 4000;
+
+let model, webcam;
+let lastCountTime = 0;
+let inventory = { "Kynä": 0, "Hiiri": 0 };
+
+async function init() {
+  if (!model) model = await tmImage.load(URL + "model.json", URL + "metadata.json");
+
+  if (!webcam) {
+    webcam = new tmImage.Webcam(400, 400, true);
+    await webcam.setup();
+    await webcam.play();
+    document.getElementById("webcam-container").appendChild(webcam.canvas);
+    document.getElementById("status").innerText = "Kamera käynnissä";
+    window.requestAnimationFrame(loop);
+  }
+}
+
+function stopCamera() {
+  if (webcam) {
+    webcam.stop();
+    webcam.canvas.remove();
+    webcam = null;
+    document.getElementById("status").innerText = "Kamera pysäytetty";
+  }
+}
+
+async function loop() {
+  if (webcam) {
+    webcam.update();
+    await predict();
+    window.requestAnimationFrame(loop);
+  }
+}
+
+async function predict() {
+  const predictions = await model.predict(webcam.canvas);
+
+  // Etsi paras luokka
+  let best = predictions[0];
+  for (let p of predictions) if (p.probability > best.probability) best = p;
+
+  // Päivitä status
+  let statusHTML = predictions.map(p => {
+    if (p === best) {
+     
+      return `<span style="font-size:18px; color:#b8326b; font-weight:bold;">${p.className} ${(p.probability*100).toFixed(1)}%</span>`;
+    } else {
+      
+      return `<span style="font-size:14px; color:#555;">${p.className} ${(p.probability*100).toFixed(1)}%</span>`;
+    }
+  }).join(' , ');
+
+  document.getElementById("status").innerHTML = "Tunnistetut: " + statusHTML;
+
+  if (!CLASS_MAP[best.className]) return;
+
+  const mappedClass = CLASS_MAP[best.className];
+  const now = Date.now();
+
+  if (best.probability >= CONFIDENCE_THRESHOLD && now - lastCountTime > COUNT_COOLDOWN_MS) {
+    inventory[mappedClass]++;
+    lastCountTime = now;
+    updateUI();
+  }
+}
+
+
+function updateUI() {
+  document.getElementById("kynaCount").innerText = inventory["Kynä"];
+  document.getElementById("hiiriCount").innerText = inventory["Hiiri"];
+}
+
+function resetInventory() {
+  inventory["Kynä"] = 0;
+  inventory["Hiiri"] = 0;
+  updateUI();
+  document.getElementById("status").innerText = "Inventaario nollattu";
+}
+</script>
+
+</body>
+</html>
